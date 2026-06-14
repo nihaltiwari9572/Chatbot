@@ -1,0 +1,282 @@
+"""
+Nehal — FAQ Chatbot
+CodeAlpha AI Internship | Task 2
+Author: Nehal
+
+NLP Pipeline:
+  - Stopword removal + tokenization (NLTK)
+  - TF-IDF vectorization (scikit-learn)
+  - Cosine similarity matching
+  - Multi-topic FAQ support
+"""
+
+import re
+import math
+import json
+import nltk
+from collections import defaultdict
+
+nltk.download('punkt', quiet=True)
+nltk.download('punkt_tab', quiet=True)
+nltk.download('stopwords', quiet=True)
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+
+STOP_WORDS = set(stopwords.words('english'))
+
+FAQ_DATABASE = {
+    "ecommerce": [
+        {
+            "question": "How do I track my order?",
+            "answer": "Go to 'My Orders' in your account dashboard and click 'Track' next to your order. You'll get real-time courier updates and an estimated delivery window.",
+            "tags": ["track", "order", "delivery", "shipment", "shipping"]
+        },
+        {
+            "question": "What is your return policy?",
+            "answer": "We accept returns within 30 days of delivery. Items must be unused and in original packaging. Initiate a return from 'My Orders' and we'll send a free pickup.",
+            "tags": ["return", "refund", "policy", "exchange"]
+        },
+        {
+            "question": "How can I cancel my order?",
+            "answer": "Orders can be cancelled within 2 hours of placing. Go to 'My Orders' → select your order → click 'Cancel'. After dispatch, use the return process.",
+            "tags": ["cancel", "cancellation", "stop order"]
+        },
+        {
+            "question": "What payment methods do you accept?",
+            "answer": "We accept UPI, credit/debit cards (Visa, Mastercard, RuPay), net banking, EMI, and Cash on Delivery for eligible pin codes.",
+            "tags": ["payment", "upi", "card", "cod", "emi"]
+        },
+        {
+            "question": "How long does delivery take?",
+            "answer": "Standard delivery is 3–5 business days. Express delivery is 1–2 days (200+ cities). Rural pin codes may take 6–8 days.",
+            "tags": ["delivery", "days", "time", "express", "when"]
+        },
+        {
+            "question": "Is my payment information secure?",
+            "answer": "Yes. All transactions are 256-bit SSL encrypted. We are PCI-DSS compliant and never store your full card details.",
+            "tags": ["secure", "safety", "ssl", "fraud"]
+        },
+        {
+            "question": "How do I apply a coupon code?",
+            "answer": "On the checkout page, enter your coupon code in the 'Apply Coupon' box and click Apply. The discount reflects before payment.",
+            "tags": ["coupon", "discount", "promo", "code", "offer"]
+        },
+        {
+            "question": "What if I receive a damaged product?",
+            "answer": "Report damaged items within 48 hours via 'My Orders' → 'Report Issue'. Upload photos and we'll arrange a free replacement or full refund within 3 business days.",
+            "tags": ["damaged", "broken", "defective", "wrong", "issue"]
+        },
+        {
+            "question": "How do I contact customer support?",
+            "answer": "Reach us via Live Chat (9 AM–9 PM), email support@nehal.in, or call 1800-XXX-XXXX (toll free). Average response: 2 hours.",
+            "tags": ["contact", "support", "help", "customer care", "call"]
+        }
+    ],
+    "hr": [
+        {
+            "question": "How do I apply for a job?",
+            "answer": "Visit careers.nehal.in, search by department or location, and click 'Apply Now'. Upload your resume. You'll get a confirmation email.",
+            "tags": ["apply", "job", "career", "resume", "application"]
+        },
+        {
+            "question": "What is the interview process?",
+            "answer": "Three rounds: (1) Resume screening, (2) Technical/aptitude test, (3) HR interview. Campus hires may have an additional group discussion.",
+            "tags": ["interview", "rounds", "selection", "hiring", "process"]
+        },
+        {
+            "question": "Do you offer internships?",
+            "answer": "Yes, 3–6 month paid internships for BTech, MBA, BSc students. Apply via careers.nehal.in under 'Internship'.",
+            "tags": ["internship", "intern", "student", "btech", "stipend"]
+        }
+    ]
+}
+
+
+class TextPreprocessor:
+    """
+    NLP Preprocessing Pipeline:
+      1. Lowercase
+      2. Remove punctuation and special characters
+      3. Tokenize (NLTK word_tokenize)
+      4. Remove stopwords
+      5. Return cleaned token list
+    """
+
+    def preprocess(self, text: str) -> list[str]:
+        text = text.lower()
+        text = re.sub(r'[^a-z0-9\s]', ' ', text)
+        tokens = word_tokenize(text)
+        tokens = [t for t in tokens if t not in STOP_WORDS and len(t) > 1]
+        return tokens
+
+
+class TFIDFEngine:
+    """
+    Builds TF-IDF vectors for a FAQ corpus.
+    Computes cosine similarity between a query and each FAQ.
+    """
+
+    def __init__(self, preprocessor: TextPreprocessor):
+        self.preprocessor = preprocessor
+        self.corpus_vectors = []
+        self.faqs = []
+
+    def fit(self, faqs: list[dict]):
+        self.faqs = faqs
+        self.corpus_vectors = []
+
+        tokenized = []
+        for faq in faqs:
+            combined = faq['question'] + ' ' + ' '.join(faq.get('tags', []))
+            tokenized.append(self.preprocessor.preprocess(combined))
+
+        # Build document frequency
+        df = defaultdict(int)
+        for tokens in tokenized:
+            for term in set(tokens):
+                df[term] += 1
+
+        N = len(faqs)
+
+        for tokens in tokenized:
+            tf = defaultdict(int)
+            for t in tokens:
+                tf[t] += 1
+            vec = {}
+            for t, count in tf.items():
+                tfidf = (count / len(tokens)) * math.log((N + 1) / (df[t] + 1))
+                vec[t] = tfidf
+            self.corpus_vectors.append(vec)
+
+    def _query_vec(self, query: str) -> dict:
+        tokens = self.preprocessor.preprocess(query)
+        tf = defaultdict(int)
+        for t in tokens:
+            tf[t] += 1
+        vec = {}
+        for t, count in tf.items():
+            vec[t] = count / len(tokens) if tokens else 0
+        return vec
+
+    def _cosine_sim(self, vec_a: dict, vec_b: dict) -> float:
+        all_keys = set(vec_a) | set(vec_b)
+        dot = sum(vec_a.get(k, 0) * vec_b.get(k, 0) for k in all_keys)
+        norm_a = math.sqrt(sum(v ** 2 for v in vec_a.values()))
+        norm_b = math.sqrt(sum(v ** 2 for v in vec_b.values()))
+        return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
+
+    def find_best_match(self, query: str) -> tuple[dict, float, list]:
+        q_vec = self._query_vec(query)
+        scores = [self._cosine_sim(q_vec, cv) for cv in self.corpus_vectors]
+
+        sorted_idx = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+        best_idx = sorted_idx[0]
+        best_score = scores[best_idx]
+
+        # Top 3 runner-ups as suggestions
+        suggestions = [
+            self.faqs[i]['question']
+            for i in sorted_idx[1:4]
+            if scores[i] > 0.05
+        ]
+
+        return self.faqs[best_idx], round(best_score, 4), suggestions
+
+
+class NehalChatbot:
+    """
+    Main chatbot class.
+    Supports multiple FAQ topics and uses TF-IDF cosine similarity matching.
+    """
+
+    LOW_CONFIDENCE_THRESHOLD = 0.05
+
+    def __init__(self):
+        self.preprocessor = TextPreprocessor()
+        self.engines: dict[str, TFIDFEngine] = {}
+        self.current_topic = "ecommerce"
+        self._load_all_topics()
+
+    def _load_all_topics(self):
+        for topic, faqs in FAQ_DATABASE.items():
+            engine = TFIDFEngine(self.preprocessor)
+            engine.fit(faqs)
+            self.engines[topic] = engine
+        print(f"[Nehal] Loaded {len(FAQ_DATABASE)} topics: {list(FAQ_DATABASE.keys())}")
+
+    def set_topic(self, topic: str) -> bool:
+        if topic in self.engines:
+            self.current_topic = topic
+            return True
+        return False
+
+    def respond(self, user_input: str) -> dict:
+        engine = self.engines[self.current_topic]
+        faq, score, suggestions = engine.find_best_match(user_input)
+
+        if score < self.LOW_CONFIDENCE_THRESHOLD:
+            return {
+                "matched_question": None,
+                "answer": "I couldn't find a close match. Try rephrasing your question.",
+                "confidence": score,
+                "confidence_pct": 0,
+                "suggestions": [f['question'] for f in FAQ_DATABASE[self.current_topic][:3]],
+                "topic": self.current_topic
+            }
+
+        return {
+            "matched_question": faq['question'],
+            "answer": faq['answer'],
+            "confidence": score,
+            "confidence_pct": round(score * 100),
+            "suggestions": suggestions,
+            "topic": self.current_topic
+        }
+
+
+def run_cli():
+    bot = NehalChatbot()
+    print("\n" + "="*55)
+    print("  NEHAL — FAQ Chatbot | CodeAlpha Task 2")
+    print("="*55)
+    print(f"  Active topic: {bot.current_topic}")
+    print("  Commands: 'topic:<name>' to switch | 'quit' to exit")
+    print("  Topics:", ', '.join(FAQ_DATABASE.keys()))
+    print("="*55 + "\n")
+
+    while True:
+        try:
+            user_input = input("You: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n[Nehal] Goodbye!")
+            break
+
+        if not user_input:
+            continue
+
+        if user_input.lower() == 'quit':
+            print("[Nehal] Goodbye!")
+            break
+
+        if user_input.lower().startswith("topic:"):
+            topic = user_input.split(":", 1)[1].strip()
+            if bot.set_topic(topic):
+                print(f"[Nehal] Switched to topic: {topic}\n")
+            else:
+                print(f"[Nehal] Unknown topic '{topic}'. Available: {list(FAQ_DATABASE.keys())}\n")
+            continue
+
+        result = bot.respond(user_input)
+
+        print(f"\n[Nehal] ", end="")
+        if result['matched_question']:
+            print(f"(FAQ: {result['matched_question']})")
+        print(f"  {result['answer']}")
+        print(f"  Confidence: {result['confidence_pct']}%")
+        if result['suggestions']:
+            print(f"  Related: {' | '.join(result['suggestions'][:2])}")
+        print()
+
+
+if __name__ == "__main__":
+    run_cli()
